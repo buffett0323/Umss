@@ -427,7 +427,8 @@ class VoiceUnvoicedNoise2(processors.Processor):
         white_noise_frames = white_noise_frames.transpose(1, 2)  # [batch_size, n_frames, frame_size]
 
         batch_size, n_audio_frames, frame_size = white_noise_frames.shape
-
+        
+        print(f"Noise gain shape: {noise_gain.shape}")
         # Check that number of frames match.
         if n_audio_frames != n_gain_frames:
             raise ValueError(

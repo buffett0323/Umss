@@ -185,6 +185,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
 
 
         # apply synthesis model
+        print(f"Harmonic amplitude shape: {outputs['harmonic_amplitude'].shape}")
         signal = self.source_filter_synth(outputs['harmonic_amplitude'],
                                           harmonic_roll_off,
                                           f0_hz,

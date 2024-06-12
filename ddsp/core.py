@@ -20,6 +20,9 @@ import torch
 import torchaudio
 import numpy as np
 from scipy import fftpack
+import warnings
+warnings.filterwarnings("ignore", message="Casting complex values to real discards the imaginary part")
+
 
 Number = TypeVar('Number', int, float, np.ndarray, torch.Tensor)
 
@@ -566,7 +569,7 @@ def frequency_impulse_response(magnitudes: torch.Tensor,
     # the result of the iDFT is an even impulse response, i.e. zero-phase form.
     magnitudes = magnitudes.unsqueeze(-1)  # add last dimension for real and imaginary parts
     magnitudes = torch.cat([magnitudes, torch.zeros_like(magnitudes)], dim=-1)
-    impulse_response = torch.fft.irfft(magnitudes, n=magnitudes.shape[-1]) #torch.irfft(magnitudes, signal_ndim=1)
+    impulse_response = torch.fft.irfft(magnitudes, n=None, dim=-1, norm=None) #torch.irfft(magnitudes, signal_ndim=1)
     
 
     # Window and put in causal form.
@@ -639,7 +642,6 @@ def fft_convolve(audio: torch.Tensor,
                  padding: str = 'same',
                  delay_compensation: int = -1,
                  cross_fade: bool = False) -> torch.Tensor:
-
     """Filter audio with frames of time-varying impulse responses.
     Time-varying filter. Given audio [batch, n_samples], and a series of impulse
     responses [batch, n_frames, n_impulse_response], splits the audio into frames,
@@ -678,7 +680,6 @@ def fft_convolve(audio: torch.Tensor,
     audio, impulse_response = audio.type(torch.float32), impulse_response.type(torch.float32)
 
     # Add a frame dimension to impulse response if it doesn't have one.
-    audio_shape = audio.shape
     ir_shape = impulse_response.shape
     if len(ir_shape) == 2:
         impulse_response = impulse_response[:, None, :]
@@ -729,25 +730,35 @@ def fft_convolve(audio: torch.Tensor,
     pad_length_ir = fft_size - ir_size
     impulse_response = torch.nn.functional.pad(impulse_response, pad=(0, pad_length_ir))
 
-    audio_fft = torch.fft.rfft(audio_frames, n=audio_shape[-1]) # torch.view_as_complex(torch.fft.rfft(audio_frames, n=audio_shape[-1]))
-    ir_fft = torch.fft.rfft(impulse_response, n=audio_shape[-1]) # torch.view_as_complex(torch.fft.rfft(impulse_response, n=audio_shape[-1]))
+    audio_fft = torch.fft.rfft(audio_frames, n=fft_size)
+    ir_fft = torch.fft.rfft(impulse_response, n=fft_size)
+
 
     if cross_fade:
         audio_frames_out = cross_fade_time_varying_fir(audio_fft, ir_fft, frame_size, ir_size, fft_size)
     else:
-
         # Multiply the FFTs (same as convolution in time).
         audio_ir_fft = audio_fft * ir_fft
 
         # Take the IFFT to resynthesize audio.
-        audio_ir_fft = torch.view_as_real(audio_ir_fft)
-        audio_frames_out = torch.fft.irfft(audio_ir_fft, n=audio_ir_fft.shape[-1])
+        audio_frames_out = torch.fft.irfft(audio_ir_fft, n=fft_size)
 
     audio_frames_out = audio_frames_out.transpose(1, 2)  # [batch_size, frame_size, n_frames]
 
     audio_out_size = (n_ir_frames - 1) * frame_size + fft_size  # time domain length after frame-wise convolution
 
-    # same as audio_out = tf.signal.overlap_and_add(audio_frames_out, hop_size)
+    # Reshape audio_frames_out to 3D for fold function
+    audio_frames_out = audio_frames_out.reshape(batch_size, -1, fft_size)  # [batch_size, n_frames, fft_size]
+
+    # Adjust the parameters for fold
+    stride = frame_size
+    kernel_size = fft_size
+    num_blocks = (audio_out_size - kernel_size) // stride + 1
+
+    # Ensure the input to fold has the correct size
+    audio_frames_out = audio_frames_out.permute(0, 2, 1).contiguous()  # [batch_size, fft_size, n_frames]
+    audio_frames_out = audio_frames_out.reshape(batch_size, -1, num_blocks)  # [batch_size, fft_size, num_blocks]
+
     audio_out = torch.nn.functional.fold(audio_frames_out,
                                          output_size=(1, audio_out_size),
                                          kernel_size=(1, fft_size),
@@ -757,7 +768,6 @@ def fft_convolve(audio: torch.Tensor,
     # Crop and shift the output audio.
     return crop_and_compensate_delay(audio_out, audio_size, ir_size, padding,
                                      delay_compensation)
-
 
 def cross_fade_time_varying_fir(audio_fft,
                                 ir_fft,
