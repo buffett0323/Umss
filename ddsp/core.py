@@ -741,7 +741,7 @@ def fft_convolve(audio: torch.Tensor,
 
         # Take the IFFT to resynthesize audio.
         audio_ir_fft = torch.view_as_real(audio_ir_fft)
-        audio_frames_out = torch.fft.irfft(audio_ir_fft, n=audio_frames.shape[-1])
+        audio_frames_out = torch.fft.irfft(audio_ir_fft, n=audio_ir_fft.shape[-1])
 
     audio_frames_out = audio_frames_out.transpose(1, 2)  # [batch_size, frame_size, n_frames]
 
